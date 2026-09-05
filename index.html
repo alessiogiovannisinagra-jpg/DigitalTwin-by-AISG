@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Twin - Live Dashboard</title>
+    <!-- Tailwind CSS per uno stile moderno e pulito -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Libreria client di Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-p-6">
+
+    <div class="max-w-6xl mx-auto p-6">
+        <!-- Intestazione -->
+        <header class="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold tracking-wide">Digital Twin Control Center</h1>
+                <p class="text-sm text-slate-400">Monitoraggio impianti e telemetria in tempo reale</p>
+            </div>
+            <div id="connection-status" class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Connessione in corso...
+            </div>
+        </header>
+
+        <!-- Griglia dei Dispositivi -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="devices-grid">
+            <!-- I box dei dispositivi verranno inseriti qui via JavaScript -->
+        </div>
+
+        <!-- Sezione Ultimi Log di Sistema -->
+        <div class="mt-12">
+            <h2 class="text-xl font-semibold mb-4">Log di Sistema Recenti</h2>
+            <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 h-48 overflow-y-auto font-mono text-xs text-slate-300 space-y-2" id="logs-container">
+                <div class="text-slate-500">In attesa di eventi...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Le tue credenziali reali di Supabase
+        const SUPABASE_URL = "https://kxcuinswyrrzpmlknejs.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4Y3VpbnN3eXJyenBtbGtuZWpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MzI0NzgsImV4cCI6MjEwNDIwODQ3OH0._S5k8CEviqpUAFlFwD4bxhkcPdCozUhz4AWLamFutqw";
+
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const statusBadge = document.getElementById('connection-status');
+        const devicesGrid = document.getElementById('devices-grid');
+        const logsContainer = document.getElementById('logs-container');
+
+        // Funzione per caricare i dispositivi iniziali dal database
+        async function fetchDevices() {
+            const { data, error } = await supabaseClient
+                .from('devices')
+                .select('*');
+
+            if (error) {
+                console.error('Errore nel recupero dispositivi:', error);
+                statusBadge.textContent = "Errore di connessione";
+                statusBadge.className = "px-3 py-1 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20";
+                return;
+            }
+
+            statusBadge.textContent = "Sistema Online (Live)";
+            statusBadge.className = "px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+
+            renderDevices(data);
+            fetchLatestTelemetry();
+            fetchLatestLogs();
+        }
+
+        // Renderizza le card dei dispositivi
+        function renderDevices(devices) {
+            if (!devices || devices.length === 0) {
+                devicesGrid.innerHTML = `<div class="text-slate-500 col-span-full">Nessun dispositivo registrato nel database.</div>`;
+                return;
+            }
+
+            devicesGrid.innerHTML = devices.map(dev => `
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-5 shadow-lg relative overflow-hidden" id="device-${dev.id}">
+                    <div class="flex justify-between items-start mb-3">
+                        <h3 class="font-bold text-lg text-white">${dev.name}</h3>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ${dev.status === 'online' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'} status-badge">
+                            ${dev.status}
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400 mb-4">Cliente: <span class="text-slate-200">${dev.client_name}</span></p>
+                    
+                    <div class="bg-slate-900 rounded-lg p-3 border border-slate-800/60 space-y-2">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-slate-400">Tipo:</span>
+                            <span class="font-medium text-slate-200">${dev.device_type}</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-slate-400">Ultimo Valore:</span>
+                            <span class="font-mono text-cyan-400 font-semibold telemetry-val" data-device="${dev.id}">In attesa...</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Recupera l'ultima telemetria registrata per i dispositivi
+        async function fetchLatestTelemetry() {
+            const { data } = await supabaseClient
+                .from('device_telemetry')
+                .select('*')
+                .order('recorded_at', { ascending: false })
+                .limit(10);
+
+            if (data && data.length > 0) {
+                data.forEach(item => {
+                    const el = document.querySelector(`.telemetry-val[data-device="${item.device_id}"]`);
+                    if (el && el.textContent === "In attesa...") {
+                        el.textContent = `${item.metric_value} ${item.metric_name === 'power_kw' ? 'kW' : '°C'}`;
+                    }
+                });
+            }
+        }
+
+        // Recupera gli ultimi log di sistema
+        async function fetchLatestLogs() {
+            const { data } = await supabaseClient
+                .from('system_logs')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (data && data.length > 0) {
+                logsContainer.innerHTML = data.map(log => `
+                    <div class="border-b border-slate-900 pb-1">
+                        <span class="text-slate-500">[${new Date(log.created_at).toLocaleTimeString()}]</span> 
+                        <span class="text-cyan-400 font-semibold">${log.action_type}:</span> 
+                        <span class="text-slate-300">${log.description}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Ascoltatore Realtime di Supabase (Aggiornamenti istantanei via WebSocket)
+        function setupRealtimeListeners() {
+            supabaseClient
+                .channel('public-db-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'device_telemetry' }, payload => {
+                    const newRecord = payload.new;
+                    const el = document.querySelector(`.telemetry-val[data-device="${newRecord.device_id}"]`);
+                    if (el) {
+                        el.textContent = `${newRecord.metric_value} ${newRecord.metric_name === 'power_kw' ? 'kW' : '°C'}`;
+                        // Piccolo effetto visivo di aggiornamento
+                        el.classList.add('text-white');
+                        setTimeout(() => el.classList.remove('text-white'), 300);
+                    }
+                })
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_logs' }, payload => {
+                    const log = payload.new;
+                    const logHtml = `
+                        <div class="border-b border-slate-900 pb-1 animate-pulse">
+                            <span class="text-slate-500">[${new Date(log.created_at).toLocaleTimeString()}]</span> 
+                            <span class="text-cyan-400 font-semibold">${log.action_type}:</span> 
+                            <span class="text-slate-300">${log.description}</span>
+                        </div>
+                    `;
+                    logsContainer.insertAdjacentHTML('afterbegin', logHtml);
+                })
+                .subscribe();
+        }
+
+        // Avvio dell'app frontend
+        fetchDevices().then(() => {
+            setupRealtimeListeners();
+        });
+    </script>
+</body>
+</html>
